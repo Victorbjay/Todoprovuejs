@@ -290,7 +290,10 @@ export const useTodosStore = defineStore("todos", () => {
   }
   function replaceLocalId(tempId: Id, realId: Id) {
     const i = findIndex(tempId);
-    if (i >= 0) items.value[i].id = realId;
+    if (i >= 0) {
+      const it = items.value[i];
+      if (it) it.id = realId;
+    }
   }
   function removeLocal(id: Id) {
     const i = findIndex(id);
@@ -371,7 +374,7 @@ export const useTodosStore = defineStore("todos", () => {
       actionLabel: "Undo",
       onAction: async () => {
         const idx = findIndex(tempId);
-        const idForDelete = idx >= 0 ? items.value[idx].id : tempId;
+        const idForDelete = idx >= 0 ? items.value[idx]?.id ?? tempId : tempId;
         removeLocal(idForDelete);
         total.value = Math.max(0, total.value - 1);
         if (!isTempId(idForDelete)) {
