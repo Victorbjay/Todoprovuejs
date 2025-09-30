@@ -5,7 +5,17 @@
     <header
       class="flex flex-col md:flex-row md:items-center md:justify-between gap-3 mb-6"
     >
-      <h1 class="text-2xl font-semibold">Todo Pro</h1>
+      <div class="flex items-center gap-2">
+        <h1 class="text-2xl font-semibold">Todo Pro</h1>
+        <!-- realtime status -->
+        <span
+          class="text-xs"
+          :class="realtimeReady ? 'text-green-600' : 'text-gray-400'"
+          title="Realtime connection status"
+        >
+          {{ realtimeReady ? "live" : "offline" }}
+        </span>
+      </div>
 
       <div class="flex flex-wrap items-center gap-2">
         <input
@@ -51,7 +61,7 @@
       <button
         type="button"
         class="px-3 py-2 rounded border dark:border-gray-800"
-        @click="store.clearCompleted()"
+        @click="store.clearCompleted?.()"
       >
         Clear completed
       </button>
@@ -59,12 +69,13 @@
 
     <!-- Pager summary -->
     <div class="text-xs text-gray-600 dark:text-gray-400 mb-2">
-      <span v-if="store.total"
-        >Showing {{ store.showingFrom }}–{{ store.showingTo }} of
-        {{ store.total }} (10 per page)</span
-      >
+      <span v-if="store.total">
+        Showing {{ store.showingFrom }}–{{ store.showingTo }} of
+        {{ store.total }} (10 per page)
+      </span>
       <span v-else>No results</span>
     </div>
+    <ToastHost />
 
     <!-- Loading / Empty -->
     <div v-if="store.loading" class="text-sm text-gray-500 dark:text-gray-400">
@@ -108,11 +119,12 @@
             class="flex-1"
             :class="todo.completed ? 'line-through text-gray-500' : ''"
             @dblclick="startEdit(todo)"
-            >{{ todo.title }}</span
           >
-          <NuxtLink :to="`/todos/${todo.id}`" class="text-xs underline"
-            >Details</NuxtLink
-          >
+            {{ todo.title }}
+          </span>
+          <NuxtLink :to="`/todos/${todo.id}`" class="text-xs underline">
+            Details
+          </NuxtLink>
           <button class="text-xs underline" @click="startEdit(todo)">
             Edit
           </button>
@@ -145,15 +157,27 @@
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, nextTick, watch } from "vue";
-import { navigateTo } from "nuxt/app";
+import { ref, nextTick, watch, computed, onMounted } from "vue";
+import { navigateTo, useHead } from "nuxt/app";
 import { useAuth } from "../composables/useAuth";
 import { useTheme } from "../composables/useTheme";
 import { useTodosStore } from "../stores/todos";
+import ToastHost from "../components/ToastHost.vue";
+
+// 👉 bring in Id from the store type
+import type { Todo } from "../stores/todos";
+type Id = Todo["id"];
+
+useHead({ title: "Todo Pro" });
 
 const { isAuthed, signOut } = useAuth();
 const { isDark, toggle: toggleTheme } = useTheme();
 const store = useTodosStore();
+
+// realtime flag (safe even if store doesn’t expose it yet)
+const realtimeReady = computed<boolean>(
+  () => (store as any).realtimeReady ?? false
+);
 
 // local form/controls state
 const title = ref("");
@@ -164,65 +188,73 @@ const localFilter = ref(store.filter);
 const localSort = ref(store.sort);
 
 // debounce search
-let searchTimer: any = null;
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
 watch(queryInput, (val) => {
-  clearTimeout(searchTimer);
+  if (searchTimer) clearTimeout(searchTimer);
   searchTimer = setTimeout(() => {
-    store.setSearch(String(val || ""));
-    store.setPage(1);
-    store.fetchTodos();
+    store.setSearch?.(String(val || ""));
+    store.setPage?.(1);
+    store.fetchTodos?.();
   }, 300);
 });
 
 // filter/sort watchers
 watch(localFilter, (val) => {
-  store.setFilter(val as any);
-  store.fetchTodos();
+  store.setFilter?.(val as any);
+  store.fetchTodos?.();
 });
 watch(localSort, (val) => {
-  store.setSort(val as any);
-  store.fetchTodos();
+  store.setSort?.(val as any);
+  store.fetchTodos?.();
 });
 
 // edit state
-const editingId = ref<string | null>(null);
+const editingId = ref<Id | null>(null);
 const editTitle = ref("");
 const editInput = ref<HTMLInputElement | null>(null);
 
 onMounted(async () => {
   if (!isAuthed.value) return navigateTo("/login");
-  await store.fetchTodos();
-  store.startRealtime();
+  await store.fetchTodos?.();
+  (store as any).startRealtime?.(); // subscribe if available
 });
 
 const onAdd = async () => {
   if (!title.value.trim()) return;
-  await store.addTodo(title.value.trim());
+  await store.addTodo?.(title.value.trim());
   title.value = "";
 };
-const toggleTodo = async (todo: any, e: Event) => {
+
+const toggleTodo = async (todo: Todo, e: Event) => {
   const target = e.target as HTMLInputElement;
-  await store.toggleTodo(todo.id, target.checked);
+  await store.toggleTodo?.(todo.id as Id, target.checked);
 };
-const del = async (id: string) => {
-  await store.removeTodo(id);
+
+const del = async (id: Id) => {
+  // ✅ fix the typo here
+  await store.removeTodo?.(id);
 };
-const startEdit = async (todo: any) => {
+
+const startEdit = async (todo: Todo) => {
   editingId.value = todo.id;
   editTitle.value = todo.title;
   await nextTick();
   editInput.value?.focus();
   editInput.value?.select();
 };
-const saveEdit = async (todo: any) => {
+
+const saveEdit = async (todo: Todo) => {
   const newTitle = editTitle.value.trim();
-  if (!newTitle) await store.removeTodo(todo.id);
-  else if (newTitle !== todo.title) await store.updateTitle(todo.id, newTitle);
+  if (!newTitle) await store.removeTodo?.(todo.id as Id);
+  else if (newTitle !== todo.title)
+    await store.updateTitle?.(todo.id as Id, newTitle);
   editingId.value = null;
 };
+
 const cancelEdit = () => {
   editingId.value = null;
 };
+
 const doSignOut = async () => {
   await signOut();
 };
@@ -230,12 +262,13 @@ const doSignOut = async () => {
 // pager buttons
 const goPrev = async () => {
   if (!store.hasPrev) return;
-  store.setPage(store.page - 1);
-  await store.fetchTodos();
+  store.setPage?.(store.page - 1);
+  await store.fetchTodos?.();
 };
+
 const goNext = async () => {
   if (!store.hasNext) return;
-  store.setPage(store.page + 1);
-  await store.fetchTodos();
+  store.setPage?.(store.page + 1);
+  await store.fetchTodos?.();
 };
 </script>
